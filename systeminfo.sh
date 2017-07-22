@@ -2,13 +2,7 @@
 FILE_NAME="systeminfo.txt"
 [ -e FILE_NAME ] && rm file
 
-exec > $FILE_NAME
-# Check if parameter was provided
-if [ -z "$1" ]; then
-    MTR=true
-else
-    ip_addr=$1
-fi
+exec > $FILE_NAME 2>/dev/null
 
 # Check if Debian/RedHat based
 if [ -e /etc/debian_version ]; then
@@ -126,6 +120,7 @@ echo "{${DESCRIPTION}\"public\": ${PUBLIC}, \"files\": {${FILENAME}: {\"content\
     | head -n 1 \
     | sed '{;s/"//g;s/,$//;s/\s\shtml_url/URL/;}' >&1
 
+rm -rf $FILE_NAME
 # If we could not find the html_url in the response, then we have to tell the
 # user that the http request failed and that his/her gist was not posted
 if [ ${PIPESTATUS[2]} -ne 0 ]; then
