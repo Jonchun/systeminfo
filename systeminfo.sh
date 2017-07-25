@@ -1,17 +1,31 @@
 #!/bin/bash
+echo "Collecting system information. Please wait..."
+
 FILE_NAME="systeminfo.txt"
 [ -e FILE_NAME ] && rm file
 
-exec > $FILE_NAME 2>/dev/null
+exec > /dev/null 2>&1
 
 # Check if Debian/RedHat based
 if [ -e /etc/debian_version ]; then
     DEB_BASED=true
+    apt install sysstat -y
 elif [ -e /etc/redhat-release ]; then
     RH_BASED=true
+    yum install sysstat -y
 else
     UNKNOWN_BASE=true
 fi
+
+# Check if systemd. Not perfect.
+if [[ "SYSTEMD" = *"$(strings /sbin/init | awk 'match($0, /(upstart|systemd|sysvinit)/) { print toupper(substr($0, RSTART, RLENGTH));exit; }')"* ]]; then
+    SYSTEMD_BASED=true
+fi
+
+# Initial iptables-save.
+iptables-save
+
+exec > $FILE_NAME 2>&1
 
 echo "===== CPU ====="
 mpstat
@@ -40,41 +54,70 @@ df -i
 echo "--------------------"
 printf "\n"
 
-echo "===== ip ====="
+echo "===== network ====="
 ip r
 printf "\n"
 ip a
 echo "--------------------"
 printf "\n"
 
+echo "===== iptables ====="
+iptables-save
+echo "--------------------"
+printf "\n"
+
 if ! [ $UNKNOWN_BASE ]; then
     echo "===== Apache ====="
     if [ $DEB_BASED ]; then
-        service apache2 status | cat
+        if [ $SYSTEMD_BASED ]; then
+            systemctl status apache2 | cat
+        else
+            service apache2 status | cat
+        fi
     fi  
     if [ $RH_BASED ]; then
-        service httpd status | cat
+        if [ $SYSTEMD_BASED ]; then
+            systemctl status httpd | cat
+        else
+            service httpd status | cat
+        fi
     fi
     echo "--------------------"
     printf "\n"
 
     echo "===== nginx ====="
-    service nginx status | cat
+    if [ $SYSTEMD_BASED ]; then
+        systemctl status nginx | cat
+    else
+        service nginx status | cat
+    fi
     echo "--------------------"
     printf "\n"
 
     echo "===== MySQL ====="    
     if [ $DEB_BASED ]; then
-        service mysql status | cat
+        if [ $SYSTEMD_BASED ]; then
+            systemctl status mysql | cat
+        else
+            service mysql status | cat
+        fi
     fi  
     if [ $RH_BASED ]; then
-        service mysqld status | cat
+        if [ $SYSTEMD_BASED ]; then
+            systemctl status mysqld | cat
+        else
+            service mysqld status | cat
+        fi
     fi
     echo "--------------------"
     printf "\n"
 
     echo "===== PHP ====="
-    service php-fpm status | cat
+    if [ $SYSTEMD_BASED ]; then
+        systemctl status php-fpm | cat
+    else
+        service php-fpm status | cat
+    fi
     echo "--------------------"
     printf "\n"
 fi
@@ -89,7 +132,8 @@ tail -100 /var/log/syslog
 echo "--------------------"
 printf "\n"
 
-function format_file_as_JSON_string() {
+
+function format_JSON() {
     sed -e 's/\\/\\\\/g' \
     -e 's/$/\\n/g' \
     -e 's/"/\\"/g' \
@@ -97,33 +141,25 @@ function format_file_as_JSON_string() {
     | tr -d "\n"
 }
 
-USER=
-FILENAME=
-FILE=$FILE_NAME
 CONTENT=
-DESCRIPTION=
-PUBLIC="false"
-# Here we treat the argument as a file on the local system
-if [ -f "${FILE}" ]; then
-    if [ -z "${FILENAME}" ]; then
-    # Strip everything but the filename (/usr/test.txt -> test.txt)
-    FILENAME="\"$(basename "${FILE}")\""
-    fi
-    CONTENT="\"$(format_file_as_JSON_string < "${FILE}")\""
+if [ -f "${FILE_NAME}" ]; then
+    CONTENT="\"$(format_JSON < "${FILE_NAME}")\""
 fi
 
+# Output to tty again.
 exec 1> /dev/tty
 
-echo "{${DESCRIPTION}\"public\": ${PUBLIC}, \"files\": {${FILENAME}: {\"content\": ${CONTENT}}}}" \
-    | curl --silent -X POST -H 'Content-Type: application/json' -d @- https://api.github.com/gists \
+echo "Collection complete. Uploading data anonymously to GitHub..."
+echo "{\"public\": \"false\", \"files\": {\"${FILE_NAME}\": {\"content\": ${CONTENT}}}}" \
+    | curl  --silent -X POST -H 'Content-Type: application/json' -d @- https://api.github.com/gists \
     | grep "html_url" \
     | head -n 1 \
     | sed '{;s/"//g;s/,$//;s/\s\shtml_url/URL/;}' >&1
 
-rm -rf $FILE_NAME
-# If we could not find the html_url in the response, then we have to tell the
-# user that the http request failed and that his/her gist was not posted
+# Check if gist was successful
 if [ ${PIPESTATUS[2]} -ne 0 ]; then
-    echo "ERROR: gist failed to post, script exiting..." >&1
+    echo "ERROR: Failed to upload files. Please view $FILE_NAME" >&1
     exit 1
+else
+    rm -rf $FILE_NAMEf
 fi
