@@ -161,5 +161,5 @@ if [ ${PIPESTATUS[2]} -ne 0 ]; then
     echo "ERROR: Failed to upload files. Please view $FILE_NAME" >&1
     exit 1
 else
-    rm -rf $FILE_NAMEf
+    rm -rf $FILE_NAME
 fi
